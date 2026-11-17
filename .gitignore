@@ -1,0 +1,15 @@
+.build-tools/
+build/
+dist/
+__pycache__/
+*.spec
+.test-output/
+.venv/
+venv/
+releases/
+*.log
+.env
+.env.*
+!.env.example
+Thumbs.db
+Desktop.ini
