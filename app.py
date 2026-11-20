@@ -8,6 +8,7 @@ from __future__ import annotations
 import os
 import queue
 import threading
+import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox
@@ -30,22 +31,12 @@ except Exception:  # pragma: no cover - приложение работает и
 # Палитра и оформление
 # ---------------------------------------------------------------------------
 
-BG = "#0B0F14"
-CARD = "#121820"
-CARD_2 = "#18212B"
-CARD_3 = "#202B37"
-BORDER = "#232E3A"
-TEXT = "#E8EEF5"
-MUTED = "#8B98A6"
-DIM = "#5F6C7A"
-ACCENT = "#5B8DEF"
-ACCENT_HOVER = "#74A2F5"
-ACCENT_SOFT = "#17263D"
-SUCCESS = "#46C37B"
-WARNING = "#E3B341"
-DANGER = "#F06A6A"
+from theme import (
+    BG, CARD, CARD_2, CARD_3, BORDER, TEXT, MUTED, DIM, ACCENT,
+    ACCENT_HOVER, ACCENT_SOFT, SUCCESS, WARNING, DANGER, FONT_FAMILY,
+)
+from ui_layout import build_ui
 
-FONT_FAMILY = "Segoe UI"
 ASSETS_DIR = Path(__file__).with_name("assets")
 
 
@@ -91,7 +82,9 @@ def ready_text(count: int) -> str:
 
 def walk_widgets(widget: tk.Misc):
     yield widget
-    for child in widget.winfo_children():
+    # CTkFrame.winfo_children intentionally hides its canvas. Include physical
+    # Tk children so blank areas and label surfaces receive the same binding.
+    for child in tk.Misc.winfo_children(widget):
         yield from walk_widgets(child)
 
 
@@ -104,29 +97,31 @@ class DropZone(ctk.CTkFrame):
     def __init__(self, master, fonts, on_click, on_files, dnd_ready: bool):
         super().__init__(
             master,
-            fg_color=CARD,
+            fg_color="#FBFCFF",
             border_width=1,
             border_color=BORDER,
             corner_radius=18,
-            height=158,
+            height=280,
         )
         self.pack_propagate(False)
         self.on_click = on_click
         self.on_files = on_files
         self.dnd_ready = dnd_ready
         self._leave_job: str | None = None
+        self._interactions_bound = False
+        self._click_pending = False
 
         content = ctk.CTkFrame(self, fg_color="transparent")
         content.pack(expand=True, pady=(14, 12))
 
         icon_wrap = ctk.CTkFrame(
-            content, width=48, height=48, corner_radius=24, fg_color=ACCENT_SOFT
+            content, width=56, height=56, corner_radius=15, fg_color=ACCENT_SOFT
         )
         icon_wrap.pack(pady=(0, 8))
         icon_wrap.pack_propagate(False)
         ctk.CTkLabel(
             icon_wrap,
-            text="↓",
+            text="＋",
             font=fonts["icon"],
             text_color=ACCENT,
         ).place(relx=0.5, rely=0.5, anchor="center")
@@ -139,14 +134,24 @@ class DropZone(ctk.CTkFrame):
         ).pack()
         ctk.CTkLabel(
             content,
-            text="Изображения, PDF и документы Word · нажмите, чтобы выбрать",
+            text="JPG, PNG, WEBP, PDF и документы Word",
             font=fonts["small"],
             text_color=MUTED,
         ).pack(pady=(3, 0))
 
+        self.choose_button = ctk.CTkButton(
+            content, text="Выбрать файлы", command=self._click, height=40, width=172,
+            corner_radius=8, fg_color=ACCENT, hover_color=ACCENT_HOVER,
+            text_color="#FFFFFF", font=fonts["button"],
+        )
+        self.choose_button.pack(pady=(17, 0))
+
         self.after(80, self._bind_interactions)
 
     def _bind_interactions(self) -> None:
+        if self._interactions_bound:
+            return
+        self._interactions_bound = True
         try:
             widgets = list(walk_widgets(self))
         except tk.TclError:
@@ -164,7 +169,13 @@ class DropZone(ctk.CTkFrame):
             except (tk.TclError, ValueError):
                 pass
             try:
-                widget.bind("<Button-1>", self._click, add="+")
+                # CTk.bind forwards to its internal canvas/label. Calling it on
+                # every descendant registers the same click twice on that canvas.
+                # Bind each actual Tk widget once, excluding the real button,
+                # which already invokes its command on release.
+                button_path = str(self.choose_button)
+                if str(widget) != button_path and not str(widget).startswith(button_path + "."):
+                    tk.Misc.bind(widget, "<Button-1>", self._click, add="+")
             except tk.TclError:
                 pass
 
@@ -181,7 +192,16 @@ class DropZone(ctk.CTkFrame):
                 pass
 
     def _click(self, _event=None):
-        self.on_click()
+        if not self._click_pending:
+            self._click_pending = True
+            self.after_idle(self._dispatch_click)
+        return "break"
+
+    def _dispatch_click(self):
+        try:
+            self.on_click()
+        finally:
+            self._click_pending = False
 
     def _drag_enter(self, _event=None):
         if self._leave_job is not None:
@@ -225,7 +245,7 @@ class DropZone(ctk.CTkFrame):
         try:
             self.configure(
                 border_color=ACCENT if active else BORDER,
-                fg_color="#121D2E" if active else CARD,
+                fg_color=ACCENT_SOFT if active else "#FBFCFF",
             )
         except tk.TclError:
             pass
@@ -240,10 +260,10 @@ class ConverterApp(ctk.CTk):
     def __init__(self):
         super().__init__()
 
-        ctk.set_appearance_mode("dark")
+        ctk.set_appearance_mode("light")
         self.title(f"{APP_NAME} — изображения и документы")
         self.configure(fg_color=BG)
-        self.minsize(760, 780)
+        self.minsize(980, 720)
 
         self.dnd_ready = False
         if DND_AVAILABLE:
@@ -260,6 +280,8 @@ class ConverterApp(ctk.CTk):
         self.dpi = 150
         self.output_dir = converter.default_output_dir()
         self.converting = False
+        self._file_dialog_open = False
+        self._file_dialog_next_allowed = 0.0
         self.queue: queue.Queue = queue.Queue()
         self.thumbs: dict[Path, ctk.CTkImage | None] = {}
         self.remove_buttons: list[ctk.CTkButton] = []
@@ -275,7 +297,7 @@ class ConverterApp(ctk.CTk):
         self.after(160, self._apply_icon)
         self.after(100, self._poll_queue)
 
-        width, height = 880, 860
+        width, height = 1120, 830
         screen_w = self.winfo_screenwidth()
         screen_h = self.winfo_screenheight()
         x = max(0, (screen_w - width) // 2)
@@ -289,10 +311,11 @@ class ConverterApp(ctk.CTk):
             return ctk.CTkFont(family=FONT_FAMILY, size=size, weight=weight)
 
         self.fonts = {
-            "h1": font(24, "bold"),
+            "h1": font(23, "bold"),
+            "hero": font(29, "bold"),
             "subtitle": font(11),
-            "section": font(13, "bold"),
-            "body": font(12),
+            "section": font(15, "bold"),
+            "body": font(13),
             "small": font(11),
             "tiny": font(10),
             "tiny_bold": font(9, "bold"),
@@ -329,7 +352,7 @@ class ConverterApp(ctk.CTk):
             import ctypes
 
             hwnd = ctypes.windll.user32.GetParent(self.winfo_id())
-            value = ctypes.c_int(1)
+            value = ctypes.c_int(0)
             for attribute in (20, 19):
                 result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
                     hwnd, attribute, ctypes.byref(value), ctypes.sizeof(value)
@@ -342,417 +365,7 @@ class ConverterApp(ctk.CTk):
     # -- интерфейс ----------------------------------------------------------
 
     def _build_ui(self) -> None:
-        main = ctk.CTkFrame(self, fg_color=BG, corner_radius=0)
-        main.pack(fill="both", expand=True, padx=30, pady=(24, 22))
-        main.grid_columnconfigure(0, weight=1)
-        main.grid_rowconfigure(2, weight=1)
-
-        self._build_header(main)
-        self._build_dropzone(main)
-        self._build_files_card(main)
-        self._build_settings(main)
-        self._build_output_row(main)
-        self._build_bottom(main)
-
-    def _build_header(self, parent) -> None:
-        header = ctk.CTkFrame(parent, fg_color="transparent", height=48)
-        header.grid(row=0, column=0, sticky="ew")
-        header.pack_propagate(False)
-
-        self.logo_image = self._load_logo()
-        if self.logo_image is not None:
-            logo = ctk.CTkLabel(header, text="", image=self.logo_image)
-            logo.pack(side="left", padx=(0, 12))
-        else:
-            mark = ctk.CTkFrame(
-                header, width=40, height=40, corner_radius=11, fg_color=ACCENT
-            )
-            mark.pack(side="left", padx=(0, 12))
-            mark.pack_propagate(False)
-            ctk.CTkLabel(
-                mark, text="⇄", font=self.fonts["big_icon"], text_color="#0B1220"
-            ).place(relx=0.5, rely=0.5, anchor="center")
-
-        titles = ctk.CTkFrame(header, fg_color="transparent")
-        titles.pack(side="left", anchor="w")
-        ctk.CTkLabel(
-            titles, text=APP_NAME, font=self.fonts["h1"], text_color=TEXT
-        ).pack(anchor="w")
-        ctk.CTkLabel(
-            titles,
-            text="Изображения и документы — локально, без загрузок",
-            font=self.fonts["subtitle"],
-            text_color=MUTED,
-        ).pack(anchor="w", pady=(0, 1))
-
-        chip = ctk.CTkFrame(
-            header,
-            fg_color=CARD,
-            corner_radius=13,
-            border_width=1,
-            border_color=BORDER,
-        )
-        chip.pack(side="right", pady=10)
-        ctk.CTkLabel(
-            chip,
-            text="●",
-            font=self.fonts["tiny"],
-            text_color=SUCCESS,
-        ).pack(side="left", padx=(11, 0))
-        ctk.CTkLabel(
-            chip,
-            text="Всё остаётся локально",
-            font=self.fonts["small"],
-            text_color=MUTED,
-        ).pack(side="left", padx=(5, 11), pady=4)
-
-    def _build_dropzone(self, parent) -> None:
-        self.dropzone = DropZone(
-            parent,
-            self.fonts,
-            on_click=self._choose_files,
-            on_files=self._accept_paths,
-            dnd_ready=self.dnd_ready,
-        )
-        self.dropzone.grid(row=1, column=0, sticky="ew", pady=(16, 0))
-
-    def _build_files_card(self, parent) -> None:
-        card = ctk.CTkFrame(
-            parent,
-            fg_color=CARD,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=18,
-        )
-        card.grid(row=2, column=0, sticky="nsew", pady=(14, 0))
-        card.grid_columnconfigure(0, weight=1)
-        card.grid_rowconfigure(1, weight=1)
-
-        header = ctk.CTkFrame(card, fg_color="transparent")
-        header.grid(row=0, column=0, sticky="ew", padx=16, pady=(12, 6))
-
-        ctk.CTkLabel(
-            header, text="Файлы", font=self.fonts["section"], text_color=TEXT
-        ).pack(side="left")
-        self.count_badge = ctk.CTkLabel(
-            header,
-            text="0",
-            width=24,
-            height=19,
-            corner_radius=8,
-            fg_color=CARD_2,
-            text_color=MUTED,
-            font=self.fonts["tiny_bold"],
-        )
-        self.count_badge.pack(side="left", padx=(8, 0))
-
-        self.clear_btn = ctk.CTkButton(
-            header,
-            text="Очистить",
-            width=72,
-            height=26,
-            corner_radius=8,
-            fg_color="transparent",
-            hover_color=CARD_2,
-            text_color=MUTED,
-            text_color_disabled=DIM,
-            font=self.fonts["small"],
-            command=self._clear_files,
-            state="disabled",
-        )
-        self.clear_btn.pack(side="right")
-
-        self.scroll = ctk.CTkScrollableFrame(
-            card,
-            fg_color="transparent",
-            corner_radius=0,
-            scrollbar_fg_color="transparent",
-            scrollbar_button_color=CARD_3,
-            scrollbar_button_hover_color="#2B3948",
-        )
-        self.scroll.grid(row=1, column=0, sticky="nsew", padx=(10, 8), pady=(0, 10))
-        self._scrollbar_visible = True
-        self.scroll._parent_canvas.bind(
-            "<Configure>", lambda _event: self.after_idle(self._update_scrollbar), add="+"
-        )
-        self.after(200, self._update_scrollbar)
-
-        self.empty_state = ctk.CTkFrame(self.scroll, fg_color="transparent")
-        self.empty_state.pack(fill="both", expand=True, pady=34)
-        ctk.CTkLabel(
-            self.empty_state,
-            text="Здесь появятся ваши файлы",
-            font=self.fonts["body"],
-            text_color=MUTED,
-        ).pack()
-        ctk.CTkLabel(
-            self.empty_state,
-            text="Изображения, PDF и документы Word",
-            font=self.fonts["small"],
-            text_color=DIM,
-        ).pack(pady=(3, 0))
-
-    def _build_settings(self, parent) -> None:
-        card = ctk.CTkFrame(
-            parent,
-            fg_color=CARD,
-            border_width=1,
-            border_color=BORDER,
-            corner_radius=18,
-        )
-        card.grid(row=3, column=0, sticky="ew", pady=(14, 0))
-
-        inner = ctk.CTkFrame(card, fg_color="transparent")
-        inner.pack(fill="x", padx=18, pady=14)
-        inner.grid_columnconfigure(1, weight=1)
-        self.settings_inner = inner
-
-        label_kwargs = {
-            "font": self.fonts["body"],
-            "text_color": MUTED,
-            "anchor": "w",
-        }
-
-        ctk.CTkLabel(inner, text="Формат", **label_kwargs).grid(
-            row=0, column=0, sticky="w", padx=(0, 16)
-        )
-
-        self.target_seg = ctk.CTkSegmentedButton(
-            inner,
-            values=list(converter.IMAGE_TARGETS),
-            command=self._on_target_change,
-            width=440,
-            height=34,
-            corner_radius=9,
-            border_width=2,
-            fg_color=CARD,
-            selected_color=ACCENT,
-            selected_hover_color=ACCENT_HOVER,
-            unselected_color=CARD_2,
-            unselected_hover_color=CARD_3,
-            text_color=TEXT,
-            text_color_disabled=MUTED,
-            font=self.fonts["body"],
-            dynamic_resizing=False,
-        )
-        self.target_seg.grid(row=0, column=1, sticky="e")
-        self.target_seg.set(self.target)
-
-        self.quality_label = ctk.CTkLabel(inner, text="Качество", **label_kwargs)
-        self.quality_label.grid(row=1, column=0, sticky="w", pady=(12, 0))
-        self.quality_slider = ctk.CTkSlider(
-            inner,
-            from_=30,
-            to=100,
-            number_of_steps=70,
-            height=16,
-            border_width=0,
-            fg_color=CARD_2,
-            progress_color=ACCENT,
-            button_color=ACCENT,
-            button_hover_color=ACCENT_HOVER,
-            command=self._on_quality_change,
-        )
-        self.quality_slider.grid(
-            row=1, column=1, sticky="ew", padx=(16, 14), pady=(12, 0)
-        )
-        self.quality_slider.set(self.quality)
-        self.quality_value = ctk.CTkLabel(
-            inner,
-            text=f"{self.quality}%",
-            width=40,
-            anchor="e",
-            font=self.fonts["value"],
-            text_color=TEXT,
-        )
-        self.quality_value.grid(row=1, column=2, sticky="e", pady=(12, 0))
-
-        self.dpi_label = ctk.CTkLabel(inner, text="Разрешение", **label_kwargs)
-        self.dpi_label.grid(row=2, column=0, sticky="w", pady=(12, 0))
-        self.dpi_seg = ctk.CTkSegmentedButton(
-            inner,
-            values=["96", "150", "300"],
-            command=self._on_dpi_change,
-            width=180,
-            height=30,
-            corner_radius=8,
-            border_width=2,
-            fg_color=CARD,
-            selected_color=ACCENT,
-            selected_hover_color=ACCENT_HOVER,
-            unselected_color=CARD_2,
-            unselected_hover_color=CARD_3,
-            text_color=TEXT,
-            text_color_disabled=MUTED,
-            font=self.fonts["small"],
-            dynamic_resizing=False,
-        )
-        self.dpi_seg.grid(row=2, column=1, sticky="w", padx=(16, 0), pady=(12, 0))
-        self.dpi_seg.set(str(self.dpi))
-        self.dpi_unit = ctk.CTkLabel(
-            inner,
-            text="DPI",
-            font=self.fonts["tiny"],
-            text_color=DIM,
-        )
-        self.dpi_unit.grid(row=2, column=2, sticky="e", pady=(12, 0))
-
-        self.merge_check = ctk.CTkCheckBox(
-            inner,
-            text="Собрать все изображения в один PDF",
-            variable=self.merge_var,
-            command=self._update_hint,
-            font=self.fonts["body"],
-            text_color=TEXT,
-            checkbox_width=18,
-            checkbox_height=18,
-            corner_radius=5,
-            border_width=2,
-            border_color=BORDER,
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
-            checkmark_color="#0B1220",
-        )
-        self.merge_check.grid(
-            row=3, column=0, columnspan=3, sticky="w", pady=(12, 0)
-        )
-
-        self.hint_label = ctk.CTkLabel(
-            inner,
-            text="",
-            font=self.fonts["small"],
-            text_color=DIM,
-            anchor="w",
-            justify="left",
-            wraplength=640,
-        )
-        self.hint_label.grid(
-            row=4, column=0, columnspan=3, sticky="w", pady=(8, 0)
-        )
-
-        self.quality_label.grid_remove()
-        self.quality_slider.grid_remove()
-        self.quality_value.grid_remove()
-        self.dpi_label.grid_remove()
-        self.dpi_seg.grid_remove()
-        self.dpi_unit.grid_remove()
-        self.merge_check.grid_remove()
-        self.hint_label.grid_remove()
-
-    def _build_output_row(self, parent) -> None:
-        row = ctk.CTkFrame(parent, fg_color="transparent")
-        row.grid(row=4, column=0, sticky="ew", pady=(14, 0))
-        row.grid_columnconfigure(1, weight=1)
-
-        ctk.CTkLabel(
-            row,
-            text="Папка",
-            font=self.fonts["body"],
-            text_color=MUTED,
-        ).grid(row=0, column=0, sticky="w", padx=(0, 12))
-
-        folder_box = ctk.CTkFrame(
-            row,
-            fg_color=CARD,
-            corner_radius=9,
-            border_width=1,
-            border_color=BORDER,
-            height=34,
-        )
-        folder_box.grid(row=0, column=1, sticky="ew")
-        folder_box.pack_propagate(False)
-
-        self.folder_label = ctk.CTkLabel(
-            folder_box,
-            text="",
-            font=self.fonts["small"],
-            text_color=MUTED,
-            anchor="w",
-        )
-        self.folder_label.pack(side="left", fill="x", expand=True, padx=12)
-        self._update_folder_label()
-
-        self.change_btn = ctk.CTkButton(
-            row,
-            text="Изменить",
-            width=76,
-            height=32,
-            corner_radius=9,
-            fg_color=CARD,
-            hover_color=CARD_2,
-            border_width=1,
-            border_color=BORDER,
-            text_color=TEXT,
-            font=self.fonts["small"],
-            command=self._choose_output_dir,
-        )
-        self.change_btn.grid(row=0, column=2, padx=(8, 0))
-
-        self.open_btn = ctk.CTkButton(
-            row,
-            text="Открыть",
-            width=76,
-            height=32,
-            corner_radius=9,
-            fg_color=CARD,
-            hover_color=CARD_2,
-            border_width=1,
-            border_color=BORDER,
-            text_color=TEXT,
-            font=self.fonts["small"],
-            command=self._open_output_dir,
-        )
-        self.open_btn.grid(row=0, column=3, padx=(6, 0))
-
-    def _build_bottom(self, parent) -> None:
-        bottom = ctk.CTkFrame(parent, fg_color="transparent")
-        bottom.grid(row=5, column=0, sticky="ew", pady=(16, 0))
-        bottom.grid_columnconfigure(0, weight=1)
-
-        left = ctk.CTkFrame(bottom, fg_color="transparent")
-        left.grid(row=0, column=0, sticky="ew")
-        left.grid_columnconfigure(0, weight=1)
-
-        self.status_label = ctk.CTkLabel(
-            left,
-            text="Добавьте файлы, чтобы начать",
-            font=self.fonts["body"],
-            text_color=MUTED,
-            anchor="w",
-            justify="left",
-            wraplength=440,
-        )
-        self.status_label.grid(row=0, column=0, sticky="w")
-
-        self.progress = ctk.CTkProgressBar(
-            left,
-            height=6,
-            corner_radius=3,
-            border_width=0,
-            fg_color=CARD_2,
-            progress_color=ACCENT,
-        )
-        self.progress.grid(row=1, column=0, sticky="ew", pady=(10, 0))
-        self.progress.set(0)
-        self.progress.grid_remove()
-
-        self.convert_btn = ctk.CTkButton(
-            bottom,
-            text="Конвертировать",
-            width=196,
-            height=46,
-            corner_radius=12,
-            fg_color=ACCENT,
-            hover_color=ACCENT_HOVER,
-            text_color="#0A1220",
-            text_color_disabled="#5A6A7E",
-            font=self.fonts["big_button"],
-            command=self._start_conversion,
-            state="disabled",
-        )
-        self.convert_btn.grid(
-            row=0, column=1, rowspan=2, sticky="e", padx=(18, 0)
-        )
+        build_ui(self, DropZone)
 
     # -- настройки и состояние ---------------------------------------------
 
@@ -836,15 +449,13 @@ class ConverterApp(ctk.CTk):
         targets = list(converter.targets_for(self.files))
         if self.target not in targets:
             self.target = targets[0]
-        self.target_seg.configure(
-            values=targets, width=max(190, len(targets) * 90)
-        )
+        self.target_seg.configure(values=targets)
         self.target_seg.set(self.target)
         self._update_visibility()
 
     def _update_folder_label(self) -> None:
         self.folder_label.configure(
-            text=middle_shorten(str(self.output_dir), 56)
+            text=middle_shorten(str(self.output_dir), 62)
         )
 
     def _refresh_controls(self) -> None:
@@ -882,7 +493,8 @@ class ConverterApp(ctk.CTk):
     # -- работа с файлами ---------------------------------------------------
 
     def _choose_files(self) -> None:
-        if self.converting:
+        if (self.converting or self._file_dialog_open
+                or time.monotonic() < self._file_dialog_next_allowed):
             return
         types = [
             (
@@ -897,11 +509,18 @@ class ConverterApp(ctk.CTk):
             ("Документы", "*.doc *.docx *.odt *.rtf *.txt "),
             ("Все файлы", "*.*"),
         ]
-        paths = filedialog.askopenfilenames(
-            parent=self,
-            title="Выберите файлы",
-            filetypes=types,
-        )
+        self._file_dialog_open = True
+        try:
+            paths = filedialog.askopenfilenames(
+                parent=self,
+                title="Выберите файлы",
+                filetypes=types,
+            )
+        finally:
+            self._file_dialog_open = False
+            # A native dialog runs a nested event loop. Ignore the second half
+            # of an already queued double click when the dialog closes.
+            self._file_dialog_next_allowed = time.monotonic() + 0.3
         if paths:
             self._accept_paths([Path(path) for path in paths])
 
@@ -1045,14 +664,14 @@ class ConverterApp(ctk.CTk):
         else:
             is_pdf = converter.is_pdf(path)
             holder.configure(
-                fg_color="#2A1D22" if is_pdf else CARD_3,
+                fg_color="#FFF0F2" if is_pdf else ACCENT_SOFT,
             )
             extension = path.suffix.lstrip(".").upper()
             ctk.CTkLabel(
                 holder,
                 text=shorten(extension, 4),
                 font=self.fonts["tiny_bold"],
-                text_color="#F08A8A" if is_pdf else MUTED,
+                text_color=DANGER if is_pdf else ACCENT,
             ).place(relx=0.5, rely=0.5, anchor="center")
 
         text_box = ctk.CTkFrame(row, fg_color="transparent")
@@ -1084,7 +703,7 @@ class ConverterApp(ctk.CTk):
             height=26,
             corner_radius=8,
             fg_color="transparent",
-            hover_color="#2B1A1E",
+            hover_color="#FFF0F2",
             text_color=MUTED,
             font=self.fonts["small"],
             command=lambda item=path: self._remove_file(item),

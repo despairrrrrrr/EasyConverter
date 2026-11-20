@@ -19,4 +19,4 @@ jobs:
       - name: Install LibreOffice for document tests
         run: choco install libreoffice-fresh --yes --no-progress
       - name: Test conversion
-        run: python -m unittest -v test_converter
+        run: python -m unittest -v test_converter test_ui

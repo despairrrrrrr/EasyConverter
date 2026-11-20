@@ -7,8 +7,9 @@ import zipfile
 
 ROOT = Path(__file__).resolve().parent
 SOURCE_FILES = (
-    "app.py", "app_info.py", "converter.py", "office_converter.py",
-    "build.py", "release_tools.py", "package_release.py", "test_converter.py",
+    "app.py", "app_info.py", "ui_layout.py", "theme.py", "converter.py", "office_converter.py",
+    "build.py", "build_installer.py", "installer/EasyConverter.iss",
+    "release_tools.py", "package_release.py", "test_converter.py", "test_ui.py",
     "requirements.txt", "requirements-build.txt", "run.bat", "windows-version.txt",
     "README.md", "CHANGELOG.md", "LICENSE", "THIRD_PARTY_NOTICES.md",
     "ИНСТРУКЦИЯ.txt", ".gitignore", ".gitattributes", ".github/workflows/tests.yml",

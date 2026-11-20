@@ -4,7 +4,8 @@
 
 Добавьте файлы, выберите нужный формат и папку сохранения. EasyConverter
 обрабатывает файлы на компьютере, без загрузки в облако и регистрации.
-Интерфейс — на русском языке.
+Интерфейс — на русском языке, в светлом оформлении EasyConverter Online:
+файлы слева, настройки и папка результата справа.
 
 ## Возможности
 
@@ -21,6 +22,14 @@
 - LibreOffice включён в готовую сборку: Word и Python устанавливать не нужно.
 
 ## Скачать и запустить
+
+**[Скачать EasyConverter 1.1.0 для Windows](https://github.com/despairrrrrrr/EasyConverter/releases/download/v1.1.0/EasyConverterSetup-1.1.0.exe)** — один установочный EXE, около 302 МиБ.
+Запустите установщик, выберите папку и установите программу. Он добавляет ярлык
+в меню «Пуск» и, по выбору, на рабочий стол. Python, Word, отдельная установка
+LibreOffice и интернет не требуются. Программа устанавливается для текущего
+пользователя и удаляется через список установленных приложений Windows.
+
+Ранее опубликованный portable-выпуск также доступен:
 
 1. В разделе **Releases** скачайте `EasyConverter-1.0.0-windows-x64.zip`.
 2. Полностью распакуйте архив в обычную папку.
@@ -56,7 +65,7 @@ python -m venv .venv
 ## Проверка и сборка
 
 ```powershell
-.\.venv\Scripts\python.exe -m unittest -v test_converter
+.\.venv\Scripts\python.exe -m unittest -v test_converter test_ui
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
 .\.venv\Scripts\python.exe build.py
 ```
@@ -72,7 +81,27 @@ python -m venv .venv
 Результаты: `dist/EasyConverter/` и `releases/`. Сборки и зависимости исключены
 из Git; в репозитории хранятся исходники. CI проверяет конвертацию на Windows.
 
-## Устройство проекта
+### Один установочный EXE
+
+Установите [Inno Setup](https://jrsoftware.org/inno-setup) версии 6.3 или новее
+и выполните после `build.py`:
+
+```powershell
+.\.venv\Scripts\python.exe build_installer.py
+```
+
+Если компилятор установлен в нестандартную папку, укажите полный путь к `ISCC.exe`
+в переменной `INNO_SETUP_COMPILER`. Компилятор также ищется в `.build-tools/InnoSetup/`.
+Результат — `releases/EasyConverterSetup-1.1.0.exe` и файл с SHA-256.
+Установщик включает все компоненты и не скачивает дополнительные файлы.
+
+## Онлайн-сайт
+
+[EasyConverter Online](https://easyconverter-online.grainyslug7.chatgpt.site/)
+позволяет конвертировать изображения, менять размер и поворот, собирать и объединять
+PDF прямо в браузере. Онлайн-версия развивается отдельно от настольного приложения.
+
+## Файлы настольного приложения
 
 | Файл | Назначение |
 | --- | --- |
@@ -81,8 +110,12 @@ python -m venv .venv
 | `office_converter.py` | Обработка документов через LibreOffice |
 | `app_info.py` | Название и версия |
 | `build.py` | Сборка Windows-приложения и комплектование зависимостей |
+| `build_installer.py` | Сборка единого офлайн-установщика EXE |
+| `installer/EasyConverter.iss` | Настройки установки, ярлыков и удаления |
+| `ui_layout.py`, `theme.py` | Компоновка и светлое оформление |
 | `package_release.py` | ZIP для выпуска и SHA-256 |
 | `test_converter.py` | Проверки конвертации и сохранности оригиналов |
+| `test_ui.py` | Проверки выбора файлов и компоновки окна |
 
 ## Лицензия
 

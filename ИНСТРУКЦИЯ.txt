@@ -1,4 +1,12 @@
-EasyConverter 1.0.0
+EasyConverter 1.1.0
+
+УСТАНОВКА
+Запустите EasyConverterSetup-1.1.0.exe (или EasyConverterSetup.exe).
+Выберите папку, установите программу и запускайте её через ярлык.
+Интернет и права администратора не нужны. Все компоненты включены в установщик.
+Удаление: Настройки Windows → Приложения → EasyConverter → Удалить.
+
+ЗАПУСК PORTABLE-ВЕРСИИ
 
 Запустите EasyConverter.exe двойным щелчком.
 Python, Word и отдельная установка LibreOffice не нужны.
