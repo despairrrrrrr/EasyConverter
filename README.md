@@ -97,7 +97,7 @@ python -m venv .venv
 
 ## Онлайн-сайт
 
-[EasyConverter Online](https://easyconverter-online.grainyslug7.chatgpt.site/)
+[EasyConverter Online](https://easyconverter-online.netlify.app/)
 позволяет конвертировать изображения, менять размер и поворот, собирать и объединять
 PDF прямо в браузере. Онлайн-версия развивается отдельно от настольного приложения.
 
